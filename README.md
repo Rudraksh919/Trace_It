@@ -127,13 +127,7 @@ Through this project, I gained expertise in:
 
 ## Future Enhancements
 
-- [ ] Add bounding volume hierarchies (BVH) for scene acceleration
-- [ ] Implement texture mapping and normal mapping
-- [ ] Add support for area lights and soft shadows
-- [ ] Introduce mesh loading (OBJ/STL format)
-- [ ] Implement importance sampling for better convergence
-- [ ] Add depth of field and motion blur effects
-- [ ] GPU acceleration with CUDA or OpenCL
+- GPU acceleration with CUDA or OpenCL
 
 ## Output Format
 
@@ -151,13 +145,3 @@ open scene1.ppm # macOS
 ## References
 
 - *Ray Tracing in One Weekend* series by Peter Shirley
-- *Physically Based Rendering* by Matt Pharr, Wenzel Jakob, and Greg Humphreys
-- Schlick's approximation for Fresnel reflectance
-
-## License
-
-This project was developed as part of a computer graphics course assignment.
-
-## Author
-
-Developed as part of hands-on weekly assignments focused on computer graphics fundamentals and C++ programming.
