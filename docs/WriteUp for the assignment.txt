@@ -1,0 +1,7 @@
+WriteUp for the assignment
+
+The scene has a central glass sphere (with a refractive index of 1.5) surrounded by randomly placed metal and diffuse spheres, all sitting on a large matte (Lambertian) ground. The camera moves in a full 360-degree circle around the scene, at a distance of 5 units and a height of 2 units, over 250 frames (25 frames per second).
+
+The renderer uses recursive path tracing with up to 50 light bounces and 100 samples per pixel for smooth, anti-aliased images. Materials behave as follows: metals reflect light perfectly but can have slight blurriness (fuzz between 0 and 0.5), glass uses the Schlick approximation for reflections and refractions, and diffuse surfaces scatter light in a soft, random way.
+
+Rendering the animation took six hours of nonstop computation. FFmpeg was used to create the video, but its setup required manually adding the FFmpeg files because the automatic configuration failed. The code was improved from earlier versions by fixing material reflection formulas (BRDFs) and smoothing the camera’s movement.
