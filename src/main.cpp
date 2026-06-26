@@ -64,14 +64,11 @@ color ray_color(const ray& r, const scene& world, int depth) {
     return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
 }
 
-scene random_scene() {
+scene replicated_scene() {
     scene world;
 
     // Ground
     world.add(sphere(point3(0, -1000, 0), 1000, color(0.5, 0.5, 0.5)));
-
-    // Central glass sphere
-    world.add(sphere(point3(0, 1, 0), 1.0, color(1.0, 1.0, 1.0), false, true, 0.0, 1.5));
 
     // Random smaller spheres
     for (int a = -5; a < 5; a++) {
@@ -81,38 +78,42 @@ scene random_scene() {
 
             if ((center - point3(4, 0.2, 0)).length() > 0.9) {
                 if (choose_mat < 0.8) {
-                    // Diffuse
                     auto albedo = vec3::random() * vec3::random();
                     world.add(sphere(center, 0.2, albedo));
                 } else if (choose_mat < 0.95) {
-                    // Metal
                     auto albedo = vec3::random(0.5, 1);
                     auto fuzz = random_double(0, 0.5);
                     world.add(sphere(center, 0.2, albedo, true, false, fuzz));
                 } else {
-                    // Glass
-                    world.add(sphere(center, 0.2, color(1, 1, 1), false, true));
+                    world.add(sphere(center, 0.2, color(1, 1, 1), false, true, 0.0, 1.5));
                 }
             }
         }
     }
 
+    // Central glass bubble. The negative radius flips normals to create a hollow air interior.
+    world.add(sphere(point3(0, 1, 0), 1.0, color(1.0, 1.0, 1.0), false, true, 0.0, 1.5));
+    world.add(sphere(point3(0, 1, 0), -0.95, color(1.0, 1.0, 1.0), false, true, 0.0, 1.0 / 1.5));
+
+    // Large side spheres from the reference scene
+    world.add(sphere(point3(-4, 1, 0), 1.0, color(0.4, 0.2, 0.1)));
+    world.add(sphere(point3(4, 1, 0), 1.0, color(0.7, 0.6, 0.5), true, false, 0.0));
+
     return world;
 }
-
 int main() {
     // Initialize random seed
     std::srand(std::time(0));
 
     // Image
     const auto aspect_ratio = 16.0 / 9.0;
-    const int image_width = 800;
+    const int image_width = 1080;
     const int image_height = static_cast<int>(image_width / aspect_ratio);
     const int samples_per_pixel = 100;
-    const int max_depth = 50;
+    const int max_depth = 40;
 
     // World
-    auto world = random_scene();
+    auto world = replicated_scene();
 
     // Create frames directory 
     struct stat info;
@@ -130,7 +131,7 @@ int main() {
 
         // Camera
         double theta = (2 * pi * frame) / 250.0;
-        point3 lookfrom(5*cos(theta), 2.0, 5*sin(theta));
+        point3 lookfrom(13.5*cos(theta), 2.0, 13.5*sin(theta));
         point3 lookat(0, 1, 0);
         vec3 vup(0, 1, 0);
         double vfov = 20.0;
