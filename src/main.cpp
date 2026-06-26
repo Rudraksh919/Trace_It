@@ -18,6 +18,7 @@
 #include <ctime>
 #include <cstdio>
 #include <sys/stat.h>
+#include <thread>
 
 color ray_color(const ray& r, const scene& world, int depth) {
     hit_record rec;
@@ -78,7 +79,9 @@ scene replicated_scene() {
             auto choose_mat = random_double();
             point3 center(a + 0.9*random_double(), 0.2, b + 0.9*random_double());
 
-            if ((center - point3(4, 0.2, 0)).length() > 0.9) {
+            if ((center - point3(4, 0.2, 0)).length() > 0.9
+                && (center - point3(0, 0.2, 0)).length() > 0.9
+                && (center - point3(-4, 0.2, 0)).length() > 0.9) {
                 if (choose_mat < 0.8) {
                     auto albedo = vec3::random() * vec3::random();
                     world.add(sphere(center, 0.2, albedo));
@@ -88,13 +91,14 @@ scene replicated_scene() {
                     world.add(sphere(center, 0.2, albedo, true, false, fuzz));
                 } else {
                     world.add(sphere(center, 0.2, color(1, 1, 1), false, true, 0.0, 1.5));
+                    world.add(sphere(center, -0.19, color(1, 1, 1), false, true, 0.0, 1.5));
                 }
             }
         }
     }
 
     world.add(sphere(point3(0, 1, 0), 1.0, color(1.0, 1.0, 1.0), false, true, 0.0, 1.5));
-    world.add(sphere(point3(0, 1, 0), -0.95, color(1.0, 1.0, 1.0), false, true, 0.0, 1.0 / 1.5));
+    world.add(sphere(point3(0, 1, 0), -0.95, color(1.0, 1.0, 1.0), false, true, 0.0, 1.5));
     world.add(sphere(point3(-4, 1, 0), 1.0, color(0.4, 0.2, 0.1)));
     world.add(sphere(point3(4, 1, 0), 1.0, color(0.7, 0.6, 0.5), true, false, 0.0));
 
@@ -113,7 +117,7 @@ struct render_settings {
 
 void print_usage(const char* program) {
     std::cerr
-        << "Usage: " << program << " [--renderer auto|cpu|cuda] [--width N]\n"
+        << "Usage: " << program << " [--renderer auto|cpu|cpu_multithreaded] [--width N]\n"
         << "       [--samples N] [--depth N] [--frames N] [--no-video]\n";
 }
 
@@ -133,8 +137,8 @@ bool parse_args(int argc, char** argv, render_settings& settings) {
             const char* value = require_value("--renderer");
             if (!value) return false;
             settings.renderer = value;
-            if (settings.renderer != "auto" && settings.renderer != "cpu" && settings.renderer != "cuda") {
-                std::cerr << "--renderer must be auto, cpu, or cuda\n";
+            if (settings.renderer != "auto" && settings.renderer != "cpu" && settings.renderer != "cpu_multithreaded") {
+                std::cerr << "--renderer must be auto, cpu, or cpu_multithreaded\n";
                 return false;
             }
         } else if (arg == "--width") {
@@ -219,7 +223,7 @@ void render_frame_cpu(
     }
 }
 
-bool render_frame_gpu(
+void render_frame_cpu_multithreaded(
     const scene& world,
     int frame,
     int total_frames,
@@ -230,45 +234,50 @@ bool render_frame_gpu(
     double aspect_ratio,
     const std::string& filename
 ) {
-#ifdef TRACE_IT_ENABLE_CUDA
-    return render_frame_cuda(
-        world,
-        frame,
-        total_frames,
-        image_width,
-        image_height,
-        samples_per_pixel,
-        max_depth,
-        aspect_ratio,
-        filename
-    );
-#else
-    (void)world;
-    (void)frame;
-    (void)total_frames;
-    (void)image_width;
-    (void)image_height;
-    (void)samples_per_pixel;
-    (void)max_depth;
-    (void)aspect_ratio;
-    (void)filename;
-    return false;
-#endif
-}
+    double theta = (2 * pi * frame) / static_cast<double>(total_frames);
+    point3 lookfrom(13.5*cos(theta), 2.0, 13.5*sin(theta));
+    point3 lookat(0, 1, 0);
+    vec3 vup(0, 1, 0);
+    double vfov = 20.0;
+    camera cam(lookfrom, lookat, vup, vfov, aspect_ratio);
 
-bool should_use_cuda(const std::string& renderer) {
-    if (renderer == "cpu") {
-        return false;
+    std::vector<color> buffer(static_cast<size_t>(image_width) * image_height);
+
+    int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 4;
+
+    std::vector<std::thread> threads;
+    auto worker = [&](int thread_id) {
+        for (int j = image_height - 1 - thread_id; j >= 0; j -= num_threads) {
+            for (int i = 0; i < image_width; ++i) {
+                color pixel_color(0, 0, 0);
+                for (int s = 0; s < samples_per_pixel; ++s) {
+                    auto u = (i + random_double()) / (image_width-1);
+                    auto v = (j + random_double()) / (image_height-1);
+                    ray r = cam.get_ray(u, v);
+                    pixel_color += ray_color(r, world, max_depth);
+                }
+                buffer[static_cast<size_t>(image_height - 1 - j) * image_width + i] = pixel_color;
+            }
+        }
+    };
+
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back(worker, t);
     }
 
-#ifdef TRACE_IT_ENABLE_CUDA
-    if (renderer == "cuda") {
-        return cuda_renderer_available();
+    for (auto& thread : threads) {
+        thread.join();
     }
-    return cuda_renderer_available();
-#else
-    return false;
-#endif
+
+    std::ofstream out(filename.c_str());
+    out << "P3\n" << image_width << ' ' << image_height << "\n255\n";
+    for (int j = image_height - 1; j >= 0; --j) {
+        for (int i = 0; i < image_width; ++i) {
+            color pixel_color = buffer[static_cast<size_t>(image_height - 1 - j) * image_width + i];
+            write_color(out, pixel_color, samples_per_pixel);
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -285,13 +294,8 @@ int main(int argc, char** argv) {
 
     ensure_frames_directory();
 
-    const bool use_cuda = should_use_cuda(settings.renderer);
-    if (settings.renderer == "cuda" && !use_cuda) {
-        std::cerr << "CUDA renderer was requested, but this binary was not built with usable CUDA support.\n";
-        return 1;
-    }
-
-    std::cerr << "Renderer: " << (use_cuda ? "CUDA" : "CPU") << "\n";
+    std::string renderer_desc = (settings.renderer == "cpu") ? "CPU (Single-threaded)" : "CPU (Multithreaded)";
+    std::cerr << "Renderer: " << renderer_desc << "\n";
 
     for (int frame = 0; frame < settings.total_frames; ++frame) {
         std::cerr << "\rRendering frame " << frame+1 << " of " << settings.total_frames << std::flush;
@@ -299,8 +303,8 @@ int main(int argc, char** argv) {
         char filename[32];
         sprintf(filename, "frames/frame%03d.ppm", frame);
 
-        if (use_cuda) {
-            bool ok = render_frame_gpu(
+        if (settings.renderer == "cpu") {
+            render_frame_cpu(
                 world,
                 frame,
                 settings.total_frames,
@@ -311,12 +315,8 @@ int main(int argc, char** argv) {
                 settings.aspect_ratio,
                 filename
             );
-            if (!ok) {
-                std::cerr << "\nCUDA render failed on frame " << frame << ".\n";
-                return 1;
-            }
         } else {
-            render_frame_cpu(
+            render_frame_cpu_multithreaded(
                 world,
                 frame,
                 settings.total_frames,
@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
 
     if (settings.make_video) {
         std::cerr << "Creating video...\n";
-        system("ffmpeg -framerate 25 -i frames/frame%03d.ppm -c:v libx264 -pix_fmt yuv420p output.mp4 -y");
+        system("ffmpeg -framerate 25 -i frames/frame%03d.ppm -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p output.mp4 -y");
         std::cerr << "Done! Video saved as output.mp4\n";
     }
 

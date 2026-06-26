@@ -19,17 +19,16 @@ This project implements a complete ray tracing pipeline capable of rendering rea
   - Gamma correction for accurate color representation
 - **Animation Support**: 360-degree camera rotation with frame-by-frame rendering
 - **Optimized Performance**: Efficient hit detection and vector mathematics
-- **Optional NVIDIA CUDA Rendering**: GPU path for NVIDIA cards while preserving the CPU renderer
+- **Multithreaded CPU Rendering**: Multi-core CPU parallel rendering utilizing standard C++ threads
 
 ## Project Structure
 
 ```text
 Trace_IT/
-|-- CMakeLists.txt          # Optional CUDA-aware build
+|-- CMakeLists.txt          # Standard build configuration
 |-- include/                # Header files
 |   |-- camera.h            # Camera system with field-of-view control
 |   |-- color.h             # Color utilities and output functions
-|   |-- cuda_renderer.h     # CUDA renderer interface
 |   |-- hittable.h          # Hit record structure for ray intersections
 |   |-- ray.h               # Ray class for light propagation
 |   |-- scene.h             # Scene management and object collection
@@ -37,7 +36,6 @@ Trace_IT/
 |   |-- utils.h             # Utility functions (random, math, reflection)
 |   `-- vec3.h              # 3D vector mathematics
 |-- src/                    # Source files
-|   |-- cuda_renderer.cu    # CUDA kernel implementation
 |   `-- main.cpp            # CPU renderer, CLI, scene setup
 |-- assets/                 # Output images
 |   `-- scene1.ppm          # Sample rendered scene
@@ -54,7 +52,7 @@ Trace_IT/
 - **Vector Mathematics**: Custom 3D vector class with dot/cross products, normalization, and transformations
 - **Computational Geometry**: Ray-sphere intersection using quadratic formula optimization
 - **Data Structures**: Efficient scene representation with std::vector for object management
-- **CUDA Acceleration**: Parallel per-pixel rendering on NVIDIA GPUs when the CUDA source is compiled in
+- **Multithreading**: Parallel per-pixel rendering on the CPU utilising all available hardware threads
 
 ### Rendering Pipeline
 
@@ -71,7 +69,6 @@ Trace_IT/
 
 - C++ compiler with C++11 support (g++, clang++, or MSVC)
 - CMake 3.18 or newer
-- NVIDIA CUDA Toolkit with `nvcc` on PATH (optional, for GPU rendering)
 - FFmpeg (optional, for video generation)
 
 ### Compilation
@@ -85,16 +82,14 @@ cmake --build build --config Release
 ### Running
 
 ```bash
-./build/raytracer --renderer auto
+# Run with multithreaded CPU rendering (default)
+./build/raytracer --renderer cpu_multithreaded
 
-# Force CPU rendering.
+# Force single-threaded CPU rendering.
 ./build/raytracer --renderer cpu
 
-# Force CUDA rendering.
-./build/raytracer --renderer cuda
-
 # Quick smoke test without video generation.
-./build/raytracer --renderer auto --frames 1 --width 320 --samples 4 --depth 8 --no-video
+./build/raytracer --renderer cpu_multithreaded --frames 1 --width 320 --samples 4 --depth 8 --no-video
 ```
 
 Output will be saved to:
@@ -107,7 +102,7 @@ Output will be saved to:
 You can change defaults in `src/main.cpp`, or use CLI flags for common settings:
 
 ```bash
-.\build\Release\raytracer.exe --renderer cuda --width 1080 --samples 100 --depth 40 --frames 250
+.\build\Release\raytracer.exe --renderer cpu_multithreaded --width 1080 --samples 100 --depth 40 --frames 250
 ```
 
 ## Sample Scene
@@ -121,17 +116,16 @@ The included scene features:
 
 ## Performance
 
-- **Rendering Time**: CPU rendering can take hours for the full 250-frame animation at high samples per pixel
+- **Rendering Time**: Single-threaded rendering can take hours; our new multithreaded renderer reduces this drastically depending on your CPU core count.
 - **Optimization Opportunities**:
   - Implement BVH (Bounding Volume Hierarchy) for faster intersection tests
-  - Keep scene data resident on the GPU across frames
-  - Add multithreading for the CPU fallback renderer
+  - Use SIMD (SSE/AVX) instructions for vectorized calculations
 
 ## Learning Outcomes
 
 Through this project, I gained expertise in:
 
-- **C++ Programming**: Modern C++11 features, memory management, and optimization
+- **C++ Programming**: Modern C++11 features, multithreading, memory management, and optimization
 - **Computer Graphics**: Ray tracing algorithms, BRDF models, and rendering equations
 - **Linear Algebra**: Vector/matrix operations, transformations, and coordinate systems
 - **Software Architecture**: Modular design, separation of concerns, and extensible code structure
@@ -139,7 +133,7 @@ Through this project, I gained expertise in:
 
 ## Future Enhancements
 
-- BVH acceleration structure for faster CPU and CUDA intersections
+- BVH acceleration structure for faster CPU intersections
 - Additional primitives and materials
 
 ## Output Format
