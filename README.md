@@ -121,7 +121,7 @@ The included scene features:
 
 ## Performance
 
-- **Rendering Time**: CPU rendering can take hours for the full 250-frame animation at high samples per pixel
+- **Rendering Time**: CPU rendering takes approximately **6 hours** for the full 250-frame animation. Utilizing the CUDA GPU-accelerated renderer, this rendering time is reduced to just **13 minutes**.
 - **Optimization Opportunities**:
   - Implement BVH (Bounding Volume Hierarchy) for faster intersection tests
   - Keep scene data resident on the GPU across frames
