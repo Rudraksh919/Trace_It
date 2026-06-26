@@ -15,31 +15,35 @@ This project implements a complete ray tracing pipeline capable of rendering rea
   - Dielectric (glass) materials with Schlick approximation for realistic refraction
 - **Advanced Rendering Techniques**:
   - Multi-sample anti-aliasing (configurable samples per pixel)
-  - Recursive ray bouncing (up to 50 light bounces)
+  - Recursive ray bouncing (up to 40 light bounces by default)
   - Gamma correction for accurate color representation
 - **Animation Support**: 360-degree camera rotation with frame-by-frame rendering
 - **Optimized Performance**: Efficient hit detection and vector mathematics
+- **Optional NVIDIA CUDA Rendering**: GPU path for NVIDIA cards while preserving the CPU renderer
 
 ## Project Structure
 
-```
+```text
 Trace_IT/
-├── include/              # Header files
-│   ├── camera.h         # Camera system with field-of-view control
-│   ├── color.h          # Color utilities and output functions
-│   ├── hittable.h       # Hit record structure for ray intersections
-│   ├── ray.h            # Ray class for light propagation
-│   ├── scene.h          # Scene management and object collection
-│   ├── sphere.h         # Sphere primitive with material properties
-│   ├── utils.h          # Utility functions (random, math, reflection)
-│   └── vec3.h           # 3D vector mathematics
-├── src/                 # Source files
-│   └── main.cpp         # Main rendering loop and scene setup
-├── assets/              # Output images
-│   └── scene1.ppm       # Sample rendered scene
-├── docs/                # Documentation
-│   └── WriteUp for the assignment.txt
-└── README.md
+|-- CMakeLists.txt          # Optional CUDA-aware build
+|-- include/                # Header files
+|   |-- camera.h            # Camera system with field-of-view control
+|   |-- color.h             # Color utilities and output functions
+|   |-- cuda_renderer.h     # CUDA renderer interface
+|   |-- hittable.h          # Hit record structure for ray intersections
+|   |-- ray.h               # Ray class for light propagation
+|   |-- scene.h             # Scene management and object collection
+|   |-- sphere.h            # Sphere primitive with material properties
+|   |-- utils.h             # Utility functions (random, math, reflection)
+|   `-- vec3.h              # 3D vector mathematics
+|-- src/                    # Source files
+|   |-- cuda_renderer.cu    # CUDA kernel implementation
+|   `-- main.cpp            # CPU renderer, CLI, scene setup
+|-- assets/                 # Output images
+|   `-- scene1.ppm          # Sample rendered scene
+|-- docs/                   # Documentation
+|   `-- WriteUp for the assignment.txt
+`-- README.md
 ```
 
 ## Technical Implementation
@@ -50,6 +54,7 @@ Trace_IT/
 - **Vector Mathematics**: Custom 3D vector class with dot/cross products, normalization, and transformations
 - **Computational Geometry**: Ray-sphere intersection using quadratic formula optimization
 - **Data Structures**: Efficient scene representation with std::vector for object management
+- **CUDA Acceleration**: Parallel per-pixel rendering on NVIDIA GPUs when the CUDA source is compiled in
 
 ### Rendering Pipeline
 
@@ -65,55 +70,62 @@ Trace_IT/
 ### Prerequisites
 
 - C++ compiler with C++11 support (g++, clang++, or MSVC)
+- CMake 3.18 or newer
+- NVIDIA CUDA Toolkit with `nvcc` on PATH (optional, for GPU rendering)
 - FFmpeg (optional, for video generation)
 
 ### Compilation
 
 ```bash
-# Compile the raytracer
-g++ -std=c++11 -O3 -I./include src/main.cpp -o raytracer.exe
 
-# For faster compilation during development
-g++ -std=c++11 -I./include src/main.cpp -o raytracer.exe
+cmake -S . -B build
+cmake --build build --config Release
 ```
 
 ### Running
 
 ```bash
-# Run the raytracer (generates animation frames)
-./raytracer.exe
+./build/raytracer --renderer auto
 
-# Output will be saved to:
-# - frames/frame000.ppm to frames/frame249.ppm
-# - output.mp4 (if FFmpeg is installed)
+# Force CPU rendering.
+./build/raytracer --renderer cpu
+
+# Force CUDA rendering.
+./build/raytracer --renderer cuda
+
+# Quick smoke test without video generation.
+./build/raytracer --renderer auto --frames 1 --width 320 --samples 4 --depth 8 --no-video
 ```
+
+Output will be saved to:
+
+- `frames/frame000.ppm` to `frames/frame249.ppm`
+- `output.mp4` if FFmpeg is installed and `--no-video` is not used
 
 ## Configuration
 
-Edit `src/main.cpp` to customize rendering parameters:
+You can change defaults in `src/main.cpp`, or use CLI flags for common settings:
 
-```cpp
-const auto aspect_ratio = 16.0 / 9.0;  // Image aspect ratio
-const int image_width = 800;            // Resolution width
-const int samples_per_pixel = 100;      // Anti-aliasing samples
-const int max_depth = 50;               // Maximum ray bounces
+```bash
+.\build\Release\raytracer.exe --renderer cuda --width 1080 --samples 100 --depth 40 --frames 250
 ```
 
 ## Sample Scene
 
 The included scene features:
+
 - Large ground plane with matte gray material
 - Central glass sphere with refractive index 1.5
-- 100 randomly placed spheres with varied materials (60% diffuse, 15% metal, 25% glass)
-- Rotating camera path (360 degrees over 250 frames at 25 fps)
+- Randomly placed spheres with varied diffuse, metal, and dielectric materials
+- Rotating camera path over 250 frames at 25 fps
 
 ## Performance
 
-- **Rendering Time**: ~6 hours for full 250-frame animation (800×450 resolution, 100 samples/pixel)
-- **Optimization Opportunities**: 
+- **Rendering Time**: CPU rendering can take hours for the full 250-frame animation at high samples per pixel
+- **Optimization Opportunities**:
   - Implement BVH (Bounding Volume Hierarchy) for faster intersection tests
-  - Add multithreading for parallel pixel rendering
-  - Use SIMD instructions for vector operations
+  - Keep scene data resident on the GPU across frames
+  - Add multithreading for the CPU fallback renderer
 
 ## Learning Outcomes
 
@@ -127,7 +139,8 @@ Through this project, I gained expertise in:
 
 ## Future Enhancements
 
-- GPU acceleration with CUDA or OpenCL
+- BVH acceleration structure for faster CPU and CUDA intersections
+- Additional primitives and materials
 
 ## Output Format
 
@@ -145,3 +158,4 @@ open scene1.ppm # macOS
 ## References
 
 - *Ray Tracing in One Weekend* series by Peter Shirley
+

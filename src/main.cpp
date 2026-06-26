@@ -5,6 +5,9 @@
 #include "../include/scene.h"
 #include "../include/camera.h"
 #include "../include/utils.h"
+#ifdef TRACE_IT_ENABLE_CUDA
+#include "../include/cuda_renderer.h"
+#endif
 
 #include <iostream>
 #include <fstream>
@@ -13,7 +16,8 @@
 #include <memory>
 #include <cstdlib>
 #include <ctime>
-#include <sys/stat.h>  // For directory checking
+#include <cstdio>
+#include <sys/stat.h>
 
 color ray_color(const ray& r, const scene& world, int depth) {
     hit_record rec;
@@ -67,10 +71,8 @@ color ray_color(const ray& r, const scene& world, int depth) {
 scene replicated_scene() {
     scene world;
 
-    // Ground
     world.add(sphere(point3(0, -1000, 0), 1000, color(0.5, 0.5, 0.5)));
 
-    // Random smaller spheres
     for (int a = -5; a < 5; a++) {
         for (int b = -5; b < 5; b++) {
             auto choose_mat = random_double();
@@ -91,31 +93,87 @@ scene replicated_scene() {
         }
     }
 
-    // Central glass bubble. The negative radius flips normals to create a hollow air interior.
     world.add(sphere(point3(0, 1, 0), 1.0, color(1.0, 1.0, 1.0), false, true, 0.0, 1.5));
     world.add(sphere(point3(0, 1, 0), -0.95, color(1.0, 1.0, 1.0), false, true, 0.0, 1.0 / 1.5));
-
-    // Large side spheres from the reference scene
     world.add(sphere(point3(-4, 1, 0), 1.0, color(0.4, 0.2, 0.1)));
     world.add(sphere(point3(4, 1, 0), 1.0, color(0.7, 0.6, 0.5), true, false, 0.0));
 
     return world;
 }
-int main() {
-    // Initialize random seed
-    std::srand(std::time(0));
 
-    // Image
-    const auto aspect_ratio = 16.0 / 9.0;
-    const int image_width = 1080;
-    const int image_height = static_cast<int>(image_width / aspect_ratio);
-    const int samples_per_pixel = 100;
-    const int max_depth = 40;
+struct render_settings {
+    double aspect_ratio = 16.0 / 9.0;
+    int image_width = 1080;
+    int samples_per_pixel = 100;
+    int max_depth = 40;
+    int total_frames = 250;
+    std::string renderer = "auto";
+    bool make_video = true;
+};
 
-    // World
-    auto world = replicated_scene();
+void print_usage(const char* program) {
+    std::cerr
+        << "Usage: " << program << " [--renderer auto|cpu|cuda] [--width N]\n"
+        << "       [--samples N] [--depth N] [--frames N] [--no-video]\n";
+}
 
-    // Create frames directory 
+bool parse_args(int argc, char** argv, render_settings& settings) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        auto require_value = [&](const char* name) -> const char* {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for " << name << "\n";
+                return nullptr;
+            }
+            return argv[++i];
+        };
+
+        if (arg == "--renderer") {
+            const char* value = require_value("--renderer");
+            if (!value) return false;
+            settings.renderer = value;
+            if (settings.renderer != "auto" && settings.renderer != "cpu" && settings.renderer != "cuda") {
+                std::cerr << "--renderer must be auto, cpu, or cuda\n";
+                return false;
+            }
+        } else if (arg == "--width") {
+            const char* value = require_value("--width");
+            if (!value) return false;
+            settings.image_width = std::atoi(value);
+        } else if (arg == "--samples") {
+            const char* value = require_value("--samples");
+            if (!value) return false;
+            settings.samples_per_pixel = std::atoi(value);
+        } else if (arg == "--depth") {
+            const char* value = require_value("--depth");
+            if (!value) return false;
+            settings.max_depth = std::atoi(value);
+        } else if (arg == "--frames") {
+            const char* value = require_value("--frames");
+            if (!value) return false;
+            settings.total_frames = std::atoi(value);
+        } else if (arg == "--no-video") {
+            settings.make_video = false;
+        } else if (arg == "--help" || arg == "-h") {
+            print_usage(argv[0]);
+            std::exit(0);
+        } else {
+            std::cerr << "Unknown option: " << arg << "\n";
+            return false;
+        }
+    }
+
+    if (settings.image_width <= 0 || settings.samples_per_pixel <= 0 ||
+        settings.max_depth <= 0 || settings.total_frames <= 0) {
+        std::cerr << "Width, samples, depth, and frames must be positive integers.\n";
+        return false;
+    }
+
+    return true;
+}
+
+void ensure_frames_directory() {
     struct stat info;
     if (stat("frames", &info) != 0 || !(info.st_mode & S_IFDIR)) {
         #ifdef _WIN32
@@ -124,51 +182,161 @@ int main() {
         system("mkdir -p frames");
         #endif
     }
+}
 
-    // Render frames
-    for (int frame = 0; frame < 250; ++frame) {
-        std::cerr << "\rRendering frame " << frame+1 << " of 250" << std::flush;
+void render_frame_cpu(
+    const scene& world,
+    int frame,
+    int total_frames,
+    int image_width,
+    int image_height,
+    int samples_per_pixel,
+    int max_depth,
+    double aspect_ratio,
+    const std::string& filename
+) {
+    double theta = (2 * pi * frame) / static_cast<double>(total_frames);
+    point3 lookfrom(13.5*cos(theta), 2.0, 13.5*sin(theta));
+    point3 lookat(0, 1, 0);
+    vec3 vup(0, 1, 0);
+    double vfov = 20.0;
+    camera cam(lookfrom, lookat, vup, vfov, aspect_ratio);
 
-        // Camera
-        double theta = (2 * pi * frame) / 250.0;
-        point3 lookfrom(13.5*cos(theta), 2.0, 13.5*sin(theta));
-        point3 lookat(0, 1, 0);
-        vec3 vup(0, 1, 0);
-        double vfov = 20.0;
-        camera cam(lookfrom, lookat, vup, vfov, aspect_ratio);
+    std::ofstream out(filename.c_str());
+    out << "P3\n" << image_width << ' ' << image_height << "\n255\n";
 
-        // Output file
+    for (int j = image_height-1; j >= 0; --j) {
+        for (int i = 0; i < image_width; ++i) {
+            color pixel_color(0, 0, 0);
+            for (int s = 0; s < samples_per_pixel; ++s) {
+                auto u = (i + random_double()) / (image_width-1);
+                auto v = (j + random_double()) / (image_height-1);
+                ray r = cam.get_ray(u, v);
+                pixel_color += ray_color(r, world, max_depth);
+            }
+            write_color(out, pixel_color, samples_per_pixel);
+        }
+    }
+}
+
+bool render_frame_gpu(
+    const scene& world,
+    int frame,
+    int total_frames,
+    int image_width,
+    int image_height,
+    int samples_per_pixel,
+    int max_depth,
+    double aspect_ratio,
+    const std::string& filename
+) {
+#ifdef TRACE_IT_ENABLE_CUDA
+    return render_frame_cuda(
+        world,
+        frame,
+        total_frames,
+        image_width,
+        image_height,
+        samples_per_pixel,
+        max_depth,
+        aspect_ratio,
+        filename
+    );
+#else
+    (void)world;
+    (void)frame;
+    (void)total_frames;
+    (void)image_width;
+    (void)image_height;
+    (void)samples_per_pixel;
+    (void)max_depth;
+    (void)aspect_ratio;
+    (void)filename;
+    return false;
+#endif
+}
+
+bool should_use_cuda(const std::string& renderer) {
+    if (renderer == "cpu") {
+        return false;
+    }
+
+#ifdef TRACE_IT_ENABLE_CUDA
+    if (renderer == "cuda") {
+        return cuda_renderer_available();
+    }
+    return cuda_renderer_available();
+#else
+    return false;
+#endif
+}
+
+int main(int argc, char** argv) {
+    render_settings settings;
+    if (!parse_args(argc, argv, settings)) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    std::srand(std::time(0));
+
+    const int image_height = static_cast<int>(settings.image_width / settings.aspect_ratio);
+    auto world = replicated_scene();
+
+    ensure_frames_directory();
+
+    const bool use_cuda = should_use_cuda(settings.renderer);
+    if (settings.renderer == "cuda" && !use_cuda) {
+        std::cerr << "CUDA renderer was requested, but this binary was not built with usable CUDA support.\n";
+        return 1;
+    }
+
+    std::cerr << "Renderer: " << (use_cuda ? "CUDA" : "CPU") << "\n";
+
+    for (int frame = 0; frame < settings.total_frames; ++frame) {
+        std::cerr << "\rRendering frame " << frame+1 << " of " << settings.total_frames << std::flush;
+
         char filename[32];
         sprintf(filename, "frames/frame%03d.ppm", frame);
-        std::ofstream out(filename);
-        out << "P3\n" << image_width << ' ' << image_height << "\n255\n";
 
-        // Render
-        for (int j = image_height-1; j >= 0; --j) {
-            for (int i = 0; i < image_width; ++i) {
-                color pixel_color(0, 0, 0);
-                for (int s = 0; s < samples_per_pixel; ++s) {
-                    auto u = (i + random_double()) / (image_width-1);
-                    auto v = (j + random_double()) / (image_height-1);
-                    ray r = cam.get_ray(u, v);
-                    pixel_color += ray_color(r, world, max_depth);
-                }
-                write_color(out, pixel_color, samples_per_pixel);
+        if (use_cuda) {
+            bool ok = render_frame_gpu(
+                world,
+                frame,
+                settings.total_frames,
+                settings.image_width,
+                image_height,
+                settings.samples_per_pixel,
+                settings.max_depth,
+                settings.aspect_ratio,
+                filename
+            );
+            if (!ok) {
+                std::cerr << "\nCUDA render failed on frame " << frame << ".\n";
+                return 1;
             }
+        } else {
+            render_frame_cpu(
+                world,
+                frame,
+                settings.total_frames,
+                settings.image_width,
+                image_height,
+                settings.samples_per_pixel,
+                settings.max_depth,
+                settings.aspect_ratio,
+                filename
+            );
         }
-        out.close();
     }
 
     std::cerr << "\nDone rendering frames.\n";
-    
-    // Combine frames into video using FFmpeg
-    std::cerr << "Creating video...\n";
-    #ifdef _WIN32
-    system("ffmpeg -framerate 25 -i frames/frame%03d.ppm -c:v libx264 -pix_fmt yuv420p output.mp4 -y");
-    #else
-    system("ffmpeg -framerate 25 -i frames/frame%03d.ppm -c:v libx264 -pix_fmt yuv420p output.mp4 -y");
-    #endif
-    std::cerr << "Done! Video saved as output.mp4\n";
+
+    if (settings.make_video) {
+        std::cerr << "Creating video...\n";
+        system("ffmpeg -framerate 25 -i frames/frame%03d.ppm -c:v libx264 -pix_fmt yuv420p output.mp4 -y");
+        std::cerr << "Done! Video saved as output.mp4\n";
+    }
 
     return 0;
 }
